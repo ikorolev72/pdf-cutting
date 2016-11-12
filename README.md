@@ -18,13 +18,7 @@ The both pdf files zipped and saved in the home folder.
 		
 	
 ### How to run
-There three ways to run:
-   1. From command line. Usualy for testing resone. Simple run ```./recombine_pdf.sh```
-   2. From crontab. Add next line to your crontab with ```crontab -e``` command:
-   ```
-*	*	*	*	*	/YOUR_PATH/recombine_pdf.sh >/dev/null 2>&1
-   ```
-   3. From command line as daemon. Run ```nohup /YOUR_PATH/recombine_pdf.sh &```
+   Run from command line as daemon. Run ```nohup /YOUR_PATH/recombine_pdf.sh &```
       
 	  
 	  

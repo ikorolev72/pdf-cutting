@@ -25,7 +25,7 @@ LOG="$VAR_DIR/${BASENAME}.log"
 
 RIDGE="$DIRNAME/var/Ridge-large.pdf"
 DPI=300
-DEBUG=1
+DEBUG=0
 # SCAN_INTERVAL in seconds
 SCAN_INTERVAL=60 
 MAIL_FROM='korolev-ia@yandex.ru'
@@ -63,7 +63,8 @@ init_temporary_filenames() {
 		sleep 1
 		DT=`date +%s`
 		#DT=`date +%Y-%m-%d_%H:%M:%S`
-		PDF_OUTPUT="${TMP_DIR}/${BASENAME}_${DT}_RECOMPOSITE.pdf"
+		PDF_BASENAME=`basename $1`		
+		PDF_OUTPUT="${TMP_DIR}/${PDF_BASENAME}_${DT}_RECOMPOSITE.pdf"
 		PDF_PAGE_FIRST="${TMP_DIR}/${DT}_FIRST.pdf"
 		PDF_PAGE_LAST="${TMP_DIR}/${DT}_LAST.pdf"
 		IMG_PAGE_FIRST="${TMP_DIR}/${DT}_FIRST.png"
@@ -74,7 +75,7 @@ init_temporary_filenames() {
 
 looking_for_new_files() {
 	for i in `ls -1 $SCAN_DIR/*.pdf 2>/dev/null`; do
-		init_temporary_filenames
+		init_temporary_filenames "$i"
 		# check if file fileshed upload
 		SIZE_0=`/usr/bin/stat -c %s $i`
 		sleep 10
