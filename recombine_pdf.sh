@@ -1,6 +1,6 @@
 #!/bin/bash
 # korolev-ia [at] yandex.ru
-# version 1.1 2016.11.10
+# version 1.2 2016.11.15
 ##############################
 
 
@@ -23,9 +23,10 @@ VAR_DIR="$DIRNAME/var"
 PID="$VAR_DIR/$BASENAME.pid"
 LOG="$VAR_DIR/${BASENAME}.log"
 
-RIDGE="$DIRNAME/var/Ridge-large.pdf"
+CPDF_TOOL="$DIRNAME/cpdf"
+RIDGE="$VAR_DIR/Ridge-large.pdf"
 DPI=300
-DEBUG=0
+#DEBUG=0
 # SCAN_INTERVAL in seconds
 SCAN_INTERVAL=60 
 MAIL_FROM='korolev-ia@yandex.ru'
@@ -50,8 +51,17 @@ get_size() {
 
 send_mail() {
 	# usage : send_mail 'subject' 'mail body'
-	echo "'$2'" | mailx -r "'$MAIL_FROM'" -s "'$1'" -t "'$MAIL_TO'"
-	return $?
+	if [ "x$DEBUG" == "x1" ]; then
+		echo "######## MAIL SUBJECT:" $1
+		echo "######## MAIL BODY:" $2
+	else
+		# for ubuntu
+		echo "'$2'" | mailx -r "'$MAIL_FROM'" -s "'$1'" -t "'$MAIL_TO'"
+		return $?
+		# for debian
+		#echo "'$2'" | mailx  -a "From:$MAIL_FROM" -s "'$1'" "'$MAIL_TO'"
+	fi	
+	return 0
 }
 
 remove_temporary_files() {
@@ -63,8 +73,10 @@ init_temporary_filenames() {
 		sleep 1
 		DT=`date +%s`
 		#DT=`date +%Y-%m-%d_%H:%M:%S`
-		PDF_BASENAME=`basename $1`		
-		PDF_OUTPUT="${TMP_DIR}/${PDF_BASENAME}_${DT}_RECOMPOSITE.pdf"
+		PDF_BASENAME=`basename $1`
+		#PDF_OUTPUT="${HOME_DIR}/${PDF_BASENAME}_${DT}_RECOMPOSITE.pdf"
+		PDF_RECOMPOSITE="${HOME_DIR}/${PDF_BASENAME}_${DT}_RECOMPOSITE.pdf"
+		PDF_WITHOUT_FIRST_AND_LAST_PAGES="${HOME_DIR}/${PDF_BASENAME}_${DT}_WITHOUT_FIRST_AND_LAST_PAGES.pdf"
 		PDF_PAGE_FIRST="${TMP_DIR}/${DT}_FIRST.pdf"
 		PDF_PAGE_LAST="${TMP_DIR}/${DT}_LAST.pdf"
 		IMG_PAGE_FIRST="${TMP_DIR}/${DT}_FIRST.png"
@@ -74,41 +86,41 @@ init_temporary_filenames() {
 }
 
 looking_for_new_files() {
-	for i in `ls -1 $SCAN_DIR/*.pdf 2>/dev/null`; do
+	for i in `ls -1 $SCAN_DIR/*.pdf 2>/dev/null`; do	
 		init_temporary_filenames "$i"
 		# check if file fileshed upload
 		SIZE_0=`/usr/bin/stat -c %s $i`
 		sleep 10
 		SIZE_1=`/usr/bin/stat -c %s $i`
 		if [ $SIZE_0 == $SIZE_1 ]; then
-			recomposite_file $i
+			# we will move file from SCAN to VAR dir
+			mv $i $VAR_DIR
+			if [ $? -ne 0 ]; then
+				w2log "Cannot move files '$i' to '$VAR_DIR'"
+				send_mail "PDF file processed. Error" "Cannot move file '$i' to '$VAR_DIR'. May take many times processing. Please check permission for '$i', '$VAR_DIR'"
+				continue
+			fi
+			PDF_BASENAME=`basename ${i}`
+			PDF_ORIGINAL="$VAR_DIR/$PDF_BASENAME"
+			
+			recomposite_file $PDF_ORIGINAL
 			if [ $? -ne 0 ]; then
 				remove_temporary_files			
-				rm $PDF_OUTPUT
-				w2log "Failed. Processing of file '$i': unsuccess"
-				mv $i $FAILED_DIR ||  w2log "Cannot move file '$i' to '$FAILED_DIR'"
-				send_mail "PDF file processing failed" "Failed Processing of file '$i': unsuccess. See log $LOG"
+				rm $PDF_RECOMPOSITE $PDF_WITHOUT_FIRST_AND_LAST_PAGES
+				w2log "Failed. Processing of file '$PDF_ORIGINAL': unsuccess"
+				mv $PDF_ORIGINAL $FAILED_DIR ||  w2log "Cannot move file '$PDF_ORIGINAL' to '$FAILED_DIR'"
+				send_mail "PDF file processing failed" "Failed Processing of file '$PDF_ORIGINAL': unsuccess. See log $LOG"
 			else
 				remove_temporary_files			
-				w2log "Processing of file '$i': success"
-				PDF_BASENAME=`basename ${i}`
+				w2log "Processing of file '$PDF_ORIGINAL': success"
 				ZIP_FILE="${HOME_DIR}/${PDF_BASENAME}_RESULT.zip"
-				/usr/bin/zip -m -D $ZIP_FILE $i $PDF_OUTPUT
+				/usr/bin/zip -m -j $ZIP_FILE $PDF_WITHOUT_FIRST_AND_LAST_PAGES $PDF_RECOMPOSITE
 					if [ $? -ne 0 ]; then
-						# it may be serios error if we cannot move file from SCAN_DIR
-						w2log "Cannot zip files '$i', '$PDF_OUTPUT' to '$ZIP_FILE'"
-						send_mail "PDF file processed. Warning" "Processing of file '$i': success. But Cannot zip files '$i', '$PDF_OUTPUT' to '$ZIP_FILE'"
-						if [ -f $i ] ; then
-							mv $i $HOME_DIR
-							if [ $? -ne 0 ]; then
-								w2log "Cannot move files '$i','$PDF_OUTPUT' to '$HOME_DIR'"
-								send_mail "PDF file processed. Error" "Processing of file '$i': success. But Cannot move file '$i' to '$HOME_DIR'. May take many times processing. Please check permission for '$i', '$HOME_DIR'"
-								continue
-							fi
-							mv $i $PDF_OUTPUT $HOME_DIR 
-						fi
+						w2log "Cannot zip files '$PDF_WITHOUT_FIRST_AND_LAST_PAGES', '$PDF_RECOMPOSITE' to '$ZIP_FILE'"
+						send_mail "PDF file processed. Warning" "Processing of file '$PDF_ORIGINAL': success. But Cannot zip files '$PDF_WITHOUT_FIRST_AND_LAST_PAGES', '$PDF_RECOMPOSITE' to '$ZIP_FILE'"
 					fi
-				send_mail "PDF file processed" "Processing of file '$i': success. All ok. Zip file saved to '$ZIP_FILE'"
+					# it may be serios error if we cannot move file from SCAN_DIR
+				send_mail "PDF file processed" "Processing of file '$PDF_ORIGINAL': success. All ok. Zip file saved to '$ZIP_FILE'"
 			fi
 		else
 			continue
@@ -126,24 +138,36 @@ PDF_FILE=$1
 			return 1
 		fi
 	
-PAGE_COUNT=`/usr/bin/pdfinfo -meta $PDF_FILE  | grep ^Pages: | sed 's/^Pages: *//'`	
+PAGE_COUNT=`$CPDF_TOOL -info $PDF_FILE  | grep ^Pages: | sed 's/^Pages: *//'`	
 		if [ "x$PAGE_COUNT" == "x" ]; then
 			w2log	"Cannot count the pages in file '$PDF_FILE'"
 			return 1
 		fi
+
+		if [ "$PAGE_COUNT" -lt "3" ]; then
+			w2log	"There is less than 3 pages in '$PDF_FILE'. Cannot processing this file."
+			return 1
+		fi
 		
-/usr/bin/pdfseparate $PDF_FILE -f 1 -l 1 $PDF_PAGE_FIRST
+$CPDF_TOOL $PDF_FILE 1 -o $PDF_PAGE_FIRST
 		if [ $? -ne 0 ]; then
 			w2log	"Cannot cut first page from file '$PDF_FILE'"
 			return 1
 		fi
-
-/usr/bin/pdfseparate $PDF_FILE -f $PAGE_COUNT -l $PAGE_COUNT $PDF_PAGE_LAST
+		
+$CPDF_TOOL $PDF_FILE end -o $PDF_PAGE_LAST
 		if [ $? -ne 0 ]; then
 			w2log	"Cannot cut last page from file '$PDF_FILE'"
 			return 1
 		fi
-
+	
+$CPDF_TOOL $PDF_FILE 2-~2 -o $PDF_WITHOUT_FIRST_AND_LAST_PAGES
+		if [ $? -ne 0 ]; then
+			w2log	"Cannot make new file without first and last pages from '$PDF_FILE'"
+			return 1
+		fi		
+		
+		
 convert -units PixelsPerInch -density $DPI $PDF_PAGE_FIRST -units PixelsPerInch -density $DPI $IMG_PAGE_FIRST
 		if [ $? -ne 0 ]; then
 			w2log	"Cannot convert file '$PDF_PAGE_FIRST' to '$IMG_PAGE_FIRST'"
@@ -177,7 +201,7 @@ let RIDGE_WIDTH=" $PAGE_COUNT * 1772 / 1000 "
 # summary width of output pdf
 let OUTPUT_WIDTH=" $WIDTH_FIRST + $RIDGE_WIDTH + $WIDTH_LAST "
 # ident for last_image
-let IDENT_LAST=" $WIDTH_FIRST + $RIDGE_WIDTH "
+let IDENT=" $RIDGE_WIDTH + $WIDTH_LAST "
 
 
 convert $RIDGE -resize ${RIDGE_WIDTH}x${HEIGHT_FIRST}! $RIDGE_RESIZED
@@ -185,12 +209,12 @@ convert $RIDGE -resize ${RIDGE_WIDTH}x${HEIGHT_FIRST}! $RIDGE_RESIZED
 			w2log	"Cannot resize image '$RIDGE' to size ${RIDGE_WIDTH}x${HEIGHT_FIRST} and save to '$RIDGE_RESIZED'"
 			return 1
 		fi
-convert -size ${OUTPUT_WIDTH}x${HEIGHT_FIRST} xc:white $IMG_PAGE_FIRST -geometry +0+0 \
+convert -size ${OUTPUT_WIDTH}x${HEIGHT_FIRST} xc:white $IMG_PAGE_LAST -geometry +0+0 \
 	-composite $RIDGE_RESIZED  -geometry +${WIDTH_FIRST}+0 \
-	-composite $IMG_PAGE_LAST -geometry +${IDENT_LAST}+0 -units PixelsPerInch -density $DPI \
-	-composite $PDF_OUTPUT
+	-composite $IMG_PAGE_FIRST -geometry +${IDENT}+0 -units PixelsPerInch -density $DPI \
+	-composite $PDF_RECOMPOSITE
 		if [ $? -ne 0 ]; then
-			w2log	"Cannot composite images '$IMG_PAGE_FIRST','$RIDGE_RESIZED','$IMG_PAGE_LAST' to '$PDF_OUTPUT'"
+			w2log	"Cannot composite images '$IMG_PAGE_FIRST','$RIDGE_RESIZED','$IMG_PAGE_LAST' to '$PDF_RECOMPOSITE'"
 			return 1
 		fi
 # all ok
